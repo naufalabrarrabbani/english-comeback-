@@ -68,6 +68,39 @@ function bestAudio(e: DictEntry): string | null {
   return null;
 }
 
+// Perluasan singkatan jenis kata ke Bahasa Indonesia (untuk tampilan offline).
+const POS_ID: Record<string, string> = {
+  "n.": "kata benda",
+  "v.": "kata kerja",
+  "adj.": "kata sifat",
+  "adv.": "kata keterangan",
+  "prep.": "kata depan",
+  "pron.": "kata ganti",
+  "conj.": "kata sambung",
+  "interj.": "kata seru",
+  "art.": "artikel",
+  "aux.": "kata kerja bantu",
+  "auxiliary v.": "kata kerja bantu",
+  "modal v.": "kata kerja modal",
+  "phr. v.": "phrasal verb",
+  "det.": "penentu",
+  "num.": "angka",
+  "abbr.": "singkatan",
+  "exclam.": "seruan",
+  "indefinite article": "artikel",
+  "definite article": "artikel",
+};
+
+function posId(pos: string): string {
+  return pos
+    .split(",")
+    .map((p) => {
+      const k = p.trim().toLowerCase();
+      return POS_ID[k] ? `${p.trim()} (${POS_ID[k]})` : p.trim();
+    })
+    .join(", ");
+}
+
 function WordModal({
   word,
   onClose,
@@ -82,6 +115,7 @@ function WordModal({
   const [entry, setEntry] = useState<DictEntry | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -109,7 +143,7 @@ function WordModal({
     return () => {
       alive = false;
     };
-  }, [word.w]);
+  }, [word.w, attempt]);
 
   const playAudio = () => {
     if (entry) {
@@ -155,9 +189,22 @@ function WordModal({
         {loading && <div className="loading">Mengambil definisi…</div>}
         {failed && (
           <div className="error-box">
-            Definisi online tidak ketemu untuk kata ini (atau koneksi
-            bermasalah). Arti dasarnya: <em>{word.pos}</em> — cari manual di
-            halaman Kamus.
+            <div>
+              Definisi online tidak ketemu untuk kata ini (atau koneksi
+              bermasalah). Arti dasarnya: <em>{posId(word.pos)}</em> — atau
+              cari manual di halaman Kamus.
+            </div>
+            <div style={{ marginTop: 8 }}>
+              Tombol &#9654; di atas tetap bisa dipakai untuk dengar
+              pengucapannya (suara perangkat).
+            </div>
+            <button
+              className="btn small"
+              style={{ marginTop: 10 }}
+              onClick={() => setAttempt((a) => a + 1)}
+            >
+              Coba lagi
+            </button>
           </div>
         )}
         {entry &&
