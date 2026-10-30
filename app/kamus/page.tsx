@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { speak } from "@/components/speak";
+import { lookupLocal, type BakedEntry } from "@/lib/local-dict";
 
 interface DictPhonetic {
   text?: string;
@@ -27,7 +28,8 @@ type State =
   | { kind: "idle" }
   | { kind: "loading" }
   | { kind: "error"; message: string }
-  | { kind: "done"; entry: DictEntry };
+  | { kind: "done"; entry: DictEntry }
+  | { kind: "baked"; baked: BakedEntry; word: string };
 
 export default function Kamus() {
   const [input, setInput] = useState("");
@@ -37,6 +39,13 @@ export default function Kamus() {
     const w = word.trim().toLowerCase();
     if (!w) return;
     setState({ kind: "loading" });
+    // 1) Kamus offline dulu — kata Oxford 3000 langsung tampil tanpa internet.
+    const b = await lookupLocal(w);
+    if (b && !b.missing) {
+      setState({ kind: "baked", baked: b, word: w });
+      return;
+    }
+    // 2) Live fetch sebagai cadangan (kata di luar daftar / data belum ada).
     try {
       const r = await fetch(
         `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(w)}`
@@ -65,6 +74,14 @@ export default function Kamus() {
       new Audio(a).play().catch(() => speak(entry.word));
     } else {
       speak(entry.word);
+    }
+  };
+
+  const playBakedAudio = (b: BakedEntry, word: string) => {
+    if (b.audio) {
+      new Audio(b.audio).play().catch(() => speak(word));
+    } else {
+      speak(word);
     }
   };
 
@@ -110,6 +127,51 @@ export default function Kamus() {
 
       {state.kind === "error" && (
         <div className="error-box">{state.message}</div>
+      )}
+
+      {state.kind === "baked" && (
+        <div className="card">
+          <h2 className="dict-headword">{state.word}</h2>
+          <div className="dict-meta">
+            <button
+              className="audio-btn"
+              onClick={() => playBakedAudio(state.baked, state.word)}
+              aria-label={`Dengarkan pengucapan ${state.word}`}
+              title="Dengarkan"
+            >
+              &#9654;
+            </button>
+            {state.baked.ipa && (
+              <span className="ipa" style={{ margin: 0 }}>
+                {state.baked.ipa}
+              </span>
+            )}
+          </div>
+          {state.baked.id && (
+            <div className="id-gloss">
+              Arti: <strong>{state.baked.id}</strong>
+            </div>
+          )}
+          {state.baked.meanings?.slice(0, 4).map((m, i) => (
+            <div className="def" key={i}>
+              <div className="pos-label">{m.pos}</div>
+              <ol>
+                {m.defs.slice(0, 4).map((d, j) => (
+                  <li key={j}>
+                    {d.d}
+                    {d.ex && (
+                      <span className="example">&ldquo;{d.ex}&rdquo;</span>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ))}
+          <p className="count-note">
+            Ritual: baca definisinya, tutup halaman ini, tulis ulang artinya
+            dari ingatan + 1 kalimat buatanmu.
+          </p>
+        </div>
       )}
 
       {state.kind === "done" && (

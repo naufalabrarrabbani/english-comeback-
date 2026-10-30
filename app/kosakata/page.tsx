@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import words, { LEVELS, countByLevel, type CEFR, type Word } from "@/lib/words";
 import { speak } from "@/components/speak";
+import { lookupLocal, type BakedEntry } from "@/lib/local-dict";
 
 type Status = "hafal" | "belajar";
 const STORE_KEY = "ec-word-status";
@@ -113,51 +114,76 @@ function WordModal({
   onMark: (w: string, s: Status | null) => void;
 }) {
   const [entry, setEntry] = useState<DictEntry | null>(null);
+  const [baked, setBaked] = useState<BakedEntry | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  // "Coba lagi" pada kartu kata-tanpa-data: lewati kamus lokal, langsung coba live fetch.
+  const skipLocalRef = useRef(false);
+
+  useEffect(() => {
+    skipLocalRef.current = false;
+  }, [word.w]);
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
     setFailed(false);
     setEntry(null);
-    fetch(
-      `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(
-        word.w
-      )}`
-    )
-      .then((r) => {
+    setBaked(null);
+    (async () => {
+      // 1) Kamus offline dulu — tanpa internet pun kartu tetap tampil.
+      if (!skipLocalRef.current) {
+        const b = await lookupLocal(word.w);
+        if (!alive) return;
+        if (b) {
+          setBaked(b);
+          setLoading(false);
+          return;
+        }
+        // Shard gagal dimuat -> lanjut ke live fetch di bawah.
+      }
+      // 2) Live fetch hanya sebagai cadangan.
+      try {
+        const r = await fetch(
+          `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(
+            word.w
+          )}`
+        );
         if (!r.ok) throw new Error("not found");
-        return r.json();
-      })
-      .then((d) => {
-        if (alive) setEntry(d[0] as DictEntry);
-      })
-      .catch(() => {
+        const d = (await r.json()) as DictEntry[];
+        if (alive) setEntry(d[0]);
+      } catch {
         if (alive) setFailed(true);
-      })
-      .finally(() => {
+      } finally {
         if (alive) setLoading(false);
-      });
+      }
+    })();
     return () => {
       alive = false;
     };
   }, [word.w, attempt]);
 
   const playAudio = () => {
-    if (entry) {
-      const a = bestAudio(entry);
-      if (a) {
-        new Audio(a).play().catch(() => speak(word.w));
-        return;
-      }
+    const a =
+      baked?.audio || (entry ? bestAudio(entry) : null);
+    if (a) {
+      new Audio(a).play().catch(() => speak(word.w));
+      return;
     }
     speak(word.w);
   };
 
   const ipa =
-    entry?.phonetic || entry?.phonetics.find((p) => p.text)?.text || null;
+    baked?.ipa ||
+    entry?.phonetic ||
+    entry?.phonetics.find((p) => p.text)?.text ||
+    null;
+
+  const retryLive = () => {
+    skipLocalRef.current = true;
+    setAttempt((a) => a + 1);
+  };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -187,6 +213,55 @@ function WordModal({
         {ipa && <div className="ipa">{ipa}</div>}
 
         {loading && <div className="loading">Mengambil definisi…</div>}
+
+        {baked && !baked.missing && baked.id && (
+          <div className="id-gloss">
+            Arti: <strong>{baked.id}</strong>
+          </div>
+        )}
+        {baked &&
+          !baked.missing &&
+          baked.meanings?.slice(0, 3).map((m, i) => (
+            <div className="def" key={i}>
+              <div className="pos-label">{m.pos}</div>
+              <ol>
+                {m.defs.slice(0, 2).map((d, j) => (
+                  <li key={j}>
+                    {d.d}
+                    {d.ex && (
+                      <span className="example">&ldquo;{d.ex}&rdquo;</span>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ))}
+
+        {baked && baked.missing && !entry && !failed && (
+          <div className="error-box">
+            <div>
+              Definisi kata ini belum tersedia di kamus offline. Jenis
+              katanya: <em>{posId(word.pos)}</em> ({word.level}).
+            </div>
+            {baked.id && (
+              <div style={{ marginTop: 6 }}>
+                Arti: <strong>{baked.id}</strong>
+              </div>
+            )}
+            <div style={{ marginTop: 8 }}>
+              Tombol &#9654; di atas tetap bisa dipakai untuk dengar
+              pengucapannya (suara perangkat).
+            </div>
+            <button
+              className="btn small"
+              style={{ marginTop: 10 }}
+              onClick={retryLive}
+            >
+              Coba lagi
+            </button>
+          </div>
+        )}
+
         {failed && (
           <div className="error-box">
             <div>
